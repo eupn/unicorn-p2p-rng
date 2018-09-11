@@ -23,7 +23,9 @@ pub const COMMITMENTS_ROUND_TIMEOUT: u64 = NUM_PEERS as u64 * 1;
 pub const VDF_GATHERING_TIMEOUT: u64 = NUM_PEERS as u64 * 1;
 
 /// Number of steps to perform VDF (approx. 30 sec. on MBP 13")
-pub const VDF_NUM_STEPS: u64 = 8192 * 64;
+/// VDF delay for the most CPU-powerful peer should be at least
+/// two times more than timeout of commitments gathering
+pub const VDF_NUM_STEPS: u64 = 8192 * 128;
 
 fn main() {
     actix::System::run(|| {
