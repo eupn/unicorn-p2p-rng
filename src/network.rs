@@ -1,5 +1,6 @@
 use rug::Integer;
 use actix::prelude::*;
+use rand::{self, Rng};
 
 use peer::*;
 
@@ -37,13 +38,27 @@ impl Actor for Network {
 
 impl Network {
     pub fn broadcast_commitment(&self, commitment: Commitment) {
-        for peer in self.peers.iter() {
+        let mut peers = self.peers.clone();
+
+        // Shuffle peers to simulate network propagation delay and non-determinism.
+        // Algorithm should be robust against difference in time of arrival of messages
+        rand::thread_rng().shuffle(peers.as_mut());
+
+        // Broadcast message among peers
+        for peer in peers.iter() {
             peer.do_send(commitment)
         }
     }
 
     pub fn broadcast_vdf_result(&self, result: VdfResult) {
-        for peer in self.peers.iter() {
+        let mut peers = self.peers.clone();
+
+        // Shuffle peers to simulate network propagation delay and non-determinism.
+        // Algorithm should be robust against difference in time of arrival of messages
+        rand::thread_rng().shuffle(peers.as_mut());
+
+        // Broadcast message among peers
+        for peer in peers.iter() {
             peer.do_send(result.clone())
         }
     }

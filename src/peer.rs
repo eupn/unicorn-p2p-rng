@@ -5,7 +5,9 @@ use super::{COMMITMENTS_DELAY_MIN, COMMITMENTS_ROUND_TIMEOUT, VDF_NUM_STEPS, VDF
 use network::*;
 
 use rand::{self, Rng};
+
 use std::time::{Duration};
+use std::collections::HashMap;
 
 // Import MiMC-based verifiable delay function
 use vdf::vdf_mimc;
@@ -28,9 +30,9 @@ pub struct Peer {
     pub net_addr: Addr<Network>,
     pub state: PeerState,
 
-    pub commitments: Vec<Commitment>,
+    pub commitments: HashMap<PeerId, Commitment>,
     pub seed: Option<Integer>,
-    pub vdf_results: Vec<VdfResult>,
+    pub vdf_results: HashMap<PeerId, VdfResult>,
 }
 
 impl Peer {
@@ -39,9 +41,9 @@ impl Peer {
             id, num_peers, net_addr,
 
             state: PeerState::Idle,
-            commitments: vec![],
+            commitments: HashMap::new(),
             seed: None,
-            vdf_results: vec![]
+            vdf_results: HashMap::new()
         }
     }
 
@@ -82,7 +84,26 @@ impl Peer {
         // combining them into a seed
         if self.commitments.len() as f32 >= self.num_peers as f32 * (2f32 / 3f32) {
             let mut seed = 0;
-            for commitment in self.commitments.iter() {
+
+            // Sort commitments by peer ID to protect from different result per peer due to
+            // different time of arrival of particular commitment to the particular peer.
+            //
+            // NB: sorting actually makes sense only if seed is produced by the hash function
+            // which input is made by concatenation of the commitments:
+            // seed = H(C1 + C2 + ... + Cn), or some other operation that preserve order.
+            //
+            // In case of a XOR instead of hash function, the actual sorting doesn't make any
+            // difference due to XOR's commutative property: a ⊕ b = b ⊕ a
+            let mut commitments = self.commitments.values().into_iter()
+                .map(|c| *c)
+                .collect::<Vec<_>>();
+            commitments.sort_unstable_by_key(|k| k.id_from);
+
+            println!("[commitment round] Peer #{} is creating seed from commitments: {:?}", self.id,
+                     commitments);
+
+            // Create a seed just by XOR-ing all commitments together
+            for commitment in commitments.iter() {
                 seed ^= commitment.value;
             }
 
@@ -125,10 +146,10 @@ impl Peer {
 
             println!("[vdf round] Peer #{} is verifying {} VDF results", act.id, act.vdf_results.len());
 
-            // Verify all VDF result that we collected
+            // Verify all VDF results that we collected
             let mut num_valid = 0;
             if let Some(seed) = act.seed.clone() {
-                for vdf_result in act.vdf_results.iter() {
+                for vdf_result in act.vdf_results.values() {
                     // Reject results with different seed
                     if vdf_result.seed != seed {
                         continue
@@ -143,7 +164,12 @@ impl Peer {
 
             // If more than 2/3 of valid results collected
             if num_valid as f32 >= act.num_peers as f32 * (2f32 / 3f32) {
-                println!("[SUCCESS] Peer #{} thinks that more than 2/3 of peers agreed on: {} as next random number", act.id, act.vdf_results[0].result);
+                // New random is the any of the valid VDF results (they're supposed to be the same)
+                let new_random_number = &act.vdf_results
+                    .values().nth(0).clone().unwrap()
+                    .result;
+
+                println!("[SUCCESS] Peer #{} thinks that more than 2/3 of peers agreed on: {} as next random number", act.id, new_random_number);
             } else {
                 println!("[FAILURE] Peer #{} thinks that there's not enough evidence to think that any valid number are possible to obtain.", act.id);
             }
@@ -184,8 +210,13 @@ impl Handler<Commitment> for Peer {
     type Result = ();
 
     fn handle(&mut self, msg: Commitment, _: &mut Context<Self>) {
-        println!("[commitment round] Peer #{} received commitment {} from #{}", self.id, msg.value, msg.id_from);
-        self.commitments.push(msg);
+        // Save commitment if it wasn't already received
+        if !self.commitments.contains_key(&msg.id_from) {
+            let id_from = msg.id_from;
+            self.commitments.insert(msg.id_from, msg);
+
+            println!("[commitment round] Peer #{} saved commitment {} from #{}", self.id, msg.value, id_from);
+        }
     }
 }
 
@@ -193,7 +224,11 @@ impl Handler<VdfResult> for Peer {
     type Result = ();
 
     fn handle(&mut self, msg: VdfResult, _: &mut Context<Self>) {
-        println!("[vdf round] Peer #{} received VDF result from #{}", self.id, msg.id_from);
-        self.vdf_results.push(msg);
+        if !self.vdf_results.contains_key(&msg.id_from) {
+            let id_from = msg.id_from;
+            self.vdf_results.insert(msg.id_from, msg);
+
+            println!("[vdf round] Peer #{} saved VDF result from #{}", self.id, id_from);
+        }
     }
 }
