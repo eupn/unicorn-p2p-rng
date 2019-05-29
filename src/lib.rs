@@ -57,8 +57,8 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
         hash.result().to_vec()
     }
 
-    fn calculate_seed(&mut self) {
-        // Sort commitments by ID for deterministic result.
+    fn calculate_seed(&mut self) -> Vec<u8> {
+        // Sort commitments by ID for deterministic result
         let mut commitments = self
             .seed_commitments
             .values()
@@ -67,16 +67,14 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
             .collect::<Vec<_>>();
         commitments.sort_unstable_by_key(|k| k.id());
 
-        // Create a seed by appending commitments
+        // Create the seed by appending commitments and hashing them
         let seed = commitments
             .into_iter()
             .map(|c| c.value())
             .flatten()
             .collect::<Vec<_>>();
-        let seed = self.hash(&seed);
 
-        self.seed = Some(seed.clone());
-        self.state = UnicornState::SeedReady;
+        self.hash(&seed)
     }
 
     pub fn add_seed_commitment(&mut self, commitment: C) -> Result<(), UnicornError> {
@@ -87,7 +85,8 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
         self.seed_commitments.insert(commitment.id(), commitment);
 
         if self.seed_commitments.len() >= self.threshold {
-            self.calculate_seed();
+            self.seed = Some(self.calculate_seed());
+            self.state = UnicornState::SeedReady;
         }
 
         Ok(())
@@ -99,6 +98,17 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
 
     pub fn seed(&self) -> Option<Vec<u8>> {
         self.seed.clone()
+    }
+
+    pub fn reset(self) -> Self {
+        Self {
+            state: UnicornState::CollectingSeedCommitments,
+            seed_commitments: Default::default(),
+            vdf_results: Default::default(),
+            seed: None,
+            threshold: self.threshold,
+            _digest: PhantomData
+        }
     }
 }
 
@@ -143,11 +153,13 @@ mod tests {
         }
     }
 
+    type SimpleUnicorn = Unicorn<u64, SimpleSeedCommitment, SimpleVdfResult, Sha256>;
+
     #[test]
     pub fn test_seed_creation() {
         const THRESHOLD: usize = 3;
         let mut unicorn =
-            Unicorn::<u64, SimpleSeedCommitment, SimpleVdfResult, Sha256>::new(THRESHOLD);
+            SimpleUnicorn::new(THRESHOLD);
 
         assert_eq!(unicorn.state(), UnicornState::CollectingSeedCommitments);
 
