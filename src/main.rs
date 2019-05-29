@@ -1,9 +1,3 @@
-#[macro_use]
-extern crate actix;
-extern crate vdf;
-extern crate rug;
-extern crate rand;
-
 mod network;
 mod peer;
 
@@ -22,10 +16,12 @@ pub const COMMITMENTS_ROUND_TIMEOUT: u64 = NUM_PEERS as u64 * 1;
 /// after they calculated and sent its own VDF
 pub const VDF_GATHERING_TIMEOUT: u64 = NUM_PEERS as u64 * 1;
 
-/// Number of steps to perform VDF (approx. 30 sec. on MBP 13")
+pub const VDF_PARAMS: u16 = 1024;
+
+/// Difficulty of the VDF calculation.
 /// VDF delay for the most CPU-powerful peer should be at least
 /// two times more than timeout of commitments gathering
-pub const VDF_NUM_STEPS: u64 = 8192 * 128;
+pub const VDF_DIFFICULTY: u64 = 100_000;
 
 fn main() {
     actix::System::run(|| {

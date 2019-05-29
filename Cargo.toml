@@ -1,10 +1,12 @@
 [package]
 name = "unicorn-p2p-rng"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Eugene P. <eupn@protonmail.com>"]
+edition = "2018"
 
 [dependencies]
-actix = "0.7.4"
-vdf = { git="https://github.com/eupn/vdf-rs.git" }
-rug = "1.2.1"
+actix = "0.7"
+vdf = "0.1.0"
 rand = "0.3"
+hex = "0.3.2"
+sha2 = "0.8.0"

@@ -1,19 +1,17 @@
-use rug::Integer;
 use actix::prelude::*;
 
-use super::{COMMITMENTS_DELAY_MIN, COMMITMENTS_ROUND_TIMEOUT, VDF_NUM_STEPS, VDF_GATHERING_TIMEOUT};
-use network::*;
+use super::{COMMITMENTS_DELAY_MIN, COMMITMENTS_ROUND_TIMEOUT, VDF_DIFFICULTY, VDF_GATHERING_TIMEOUT, VDF_PARAMS};
+use crate::network::*;
 
 use rand::{self, Rng};
 
 use std::time::{Duration};
 use std::collections::HashMap;
 
-// Import MiMC-based verifiable delay function
-use vdf::vdf_mimc;
+use vdf::*;
 
-/// Possible states of the peer.
-#[derive(Copy, Clone)]
+/// Defines possible states of the peer.
+#[derive(Debug, Copy, Clone)]
 pub enum PeerState {
     Idle,
     Connected,
@@ -24,14 +22,28 @@ pub enum PeerState {
 
 pub type PeerId = u32;
 
+/// Describes single independent peer in the network.
+#[derive(Debug)]
 pub struct Peer {
+    /// ID of this peer.
     pub id: PeerId,
+
+    /// Total number of peers known.
     pub num_peers: u32,
+
+    /// Peer's address in the network.
     pub net_addr: Addr<Network>,
+
+    /// Current state of the peer.
     pub state: PeerState,
 
+    /// Collection of the commitments to the seed from the peers.
     pub commitments: HashMap<PeerId, Commitment>,
-    pub seed: Option<Integer>,
+
+    /// Seed for the VDF in current round.
+    pub seed: Option<Vec<u8>>,
+
+    /// Collection of VDF results received from the peers.
     pub vdf_results: HashMap<PeerId, VdfResult>,
 }
 
@@ -43,7 +55,7 @@ impl Peer {
             state: PeerState::Idle,
             commitments: HashMap::new(),
             seed: None,
-            vdf_results: HashMap::new()
+            vdf_results: HashMap::new(),
         }
     }
 
@@ -52,9 +64,12 @@ impl Peer {
 
         let delay = COMMITMENTS_DELAY_MIN + rand::thread_rng().gen::<u64>() % 5;
         ctx.run_later(Duration::new(delay, 0), |act, _| {
+            let mut array = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut array);
+
             let commitment = Commitment {
                 id_from: act.id,
-                value: rand::thread_rng().gen::<u64>()
+                value: array,
             };
 
             act.net_addr.do_send(commitment);
@@ -83,17 +98,8 @@ impl Peer {
         // If we collected more than 2/3 of commitments we can proceed to
         // combining them into a seed
         if self.commitments.len() as f32 >= self.num_peers as f32 * (2f32 / 3f32) {
-            let mut seed = 0;
-
             // Sort commitments by peer ID to protect from different result per peer due to
             // different time of arrival of particular commitment to the particular peer.
-            //
-            // NB: sorting actually makes sense only if seed is produced by the hash function
-            // which input is made by concatenation of the commitments:
-            // seed = H(C1 + C2 + ... + Cn), or some other operation that preserve order.
-            //
-            // In case of a XOR instead of hash function, the actual sorting doesn't make any
-            // difference due to XOR's commutative property: a ⊕ b = b ⊕ a
             let mut commitments = self.commitments.values().into_iter()
                 .map(|c| *c)
                 .collect::<Vec<_>>();
@@ -102,15 +108,17 @@ impl Peer {
             println!("[commitment round] Peer #{} is creating seed from commitments: {:?}", self.id,
                      commitments);
 
-            // Create a seed just by XOR-ing all commitments together
-            for commitment in commitments.iter() {
-                seed ^= commitment.value;
-            }
+            // Create a seed by appending commitments
+            let seed = commitments
+                .into_iter()
+                .map(|c| c.value.to_vec())
+                .flatten()
+                .collect::<Vec<_>>();
+            let seed = hash(&seed);
 
-            let seed = Integer::from(seed);
             self.seed = Some(seed.clone());
 
-            println!("[commitment round] #{}: seed created: {}", self.id, seed);
+            println!("[commitment round] #{}: seed created: {}", self.id, hex::encode(seed));
 
             self.calculate_vdf(ctx);
         } else {
@@ -130,7 +138,7 @@ impl Peer {
         println!("[vdf round] Peer #{} is calculating VDF...", self.id);
 
         self.state = PeerState::DoingVdf;
-        let witness = vdf_mimc::eval(&seed, VDF_NUM_STEPS);
+        let witness = vdf::PietrzakVDFParams(VDF_PARAMS).new().solve(&seed, VDF_DIFFICULTY).unwrap();
 
         let vdf_result = VdfResult {
             id_from: self.id,
@@ -155,8 +163,8 @@ impl Peer {
                         continue
                     }
 
-                    let is_valid = vdf_mimc::verify(&seed, VDF_NUM_STEPS, &vdf_result.result);
-                    if is_valid {
+                    let verification = vdf::PietrzakVDFParams(VDF_PARAMS).new().verify(&seed, VDF_DIFFICULTY, &vdf_result.result);
+                    if verification.is_ok() {
                         num_valid += 1;
                     }
                 }
@@ -168,8 +176,9 @@ impl Peer {
                 let new_random_number = &act.vdf_results
                     .values().nth(0).clone().unwrap()
                     .result;
+                let new_random_number = hash(&new_random_number);
 
-                println!("[SUCCESS] Peer #{} thinks that more than 2/3 of peers agreed on: {} as next random number", act.id, new_random_number);
+                println!("[SUCCESS] Peer #{} thinks that more than 2/3 of peers agreed on: {} as next random number", act.id, hex::encode(new_random_number));
             } else {
                 println!("[FAILURE] Peer #{} thinks that there's not enough evidence to think that any valid number are possible to obtain.", act.id);
             }
@@ -215,7 +224,7 @@ impl Handler<Commitment> for Peer {
             let id_from = msg.id_from;
             self.commitments.insert(msg.id_from, msg);
 
-            println!("[commitment round] Peer #{} saved commitment {} from #{}", self.id, msg.value, id_from);
+            println!("[commitment round] Peer #{} saved commitment {} from #{}", self.id, hex::encode(msg.value), id_from);
         }
     }
 }
@@ -231,4 +240,12 @@ impl Handler<VdfResult> for Peer {
             println!("[vdf round] Peer #{} saved VDF result from #{}", self.id, id_from);
         }
     }
+}
+
+fn hash(bytes: &[u8]) -> Vec<u8> {
+    use sha2::Digest;
+
+    let mut sha = sha2::Sha256::new();
+    sha.input(bytes);
+    sha.result().to_vec()
 }

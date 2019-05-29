@@ -1,9 +1,9 @@
-use rug::Integer;
 use actix::prelude::*;
 use rand::{self, Rng};
 
-use peer::*;
+use crate::peer::*;
 
+#[derive(Debug)]
 pub struct Network {
     pub peers: Vec<Addr<Peer>>
 }
@@ -19,7 +19,7 @@ pub struct Connect {
 #[derive(Message, Debug, Copy, Clone)]
 pub struct Commitment {
     pub id_from: PeerId,
-    pub value: u64,
+    pub value: [u8; 32],
 }
 
 /// A peer calculated VDF and sent it result and seed
@@ -27,8 +27,8 @@ pub struct Commitment {
 pub struct VdfResult {
     pub id_from: PeerId,
 
-    pub seed: Integer,
-    pub result: Integer,
+    pub seed: Vec<u8>,
+    pub result: Vec<u8>,
 }
 
 /// Make actor from `Network`
