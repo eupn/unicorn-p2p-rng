@@ -1,12 +1,15 @@
 use actix::prelude::*;
 
-use super::{COMMITMENTS_DELAY_MIN, COMMITMENTS_ROUND_TIMEOUT, VDF_DIFFICULTY, VDF_GATHERING_TIMEOUT, VDF_PARAMS};
+use super::{
+    COMMITMENTS_DELAY_MIN, COMMITMENTS_ROUND_TIMEOUT, VDF_DIFFICULTY, VDF_GATHERING_TIMEOUT,
+    VDF_PARAMS,
+};
 use crate::network::*;
 
 use rand::{self, Rng};
 
-use std::time::{Duration};
 use std::collections::HashMap;
+use std::time::Duration;
 
 use vdf::*;
 
@@ -17,7 +20,7 @@ pub enum PeerState {
     Connected,
     Commit,
     DoingVdf,
-    VerifyingVdf
+    VerifyingVdf,
 }
 
 pub type PeerId = u32;
@@ -50,7 +53,9 @@ pub struct Peer {
 impl Peer {
     pub fn new(id: u32, num_peers: u32, net_addr: Addr<Network>) -> Self {
         Peer {
-            id, num_peers, net_addr,
+            id,
+            num_peers,
+            net_addr,
 
             state: PeerState::Idle,
             commitments: HashMap::new(),
@@ -60,7 +65,10 @@ impl Peer {
     }
 
     fn create_commitment_after_delay(&mut self, ctx: &mut actix::Context<Self>) {
-        println!("[commitment round] Peer #{} is creating a commitment", self.id);
+        println!(
+            "[commitment round] Peer #{} is creating a commitment",
+            self.id
+        );
 
         let delay = COMMITMENTS_DELAY_MIN + rand::thread_rng().gen::<u64>() % 5;
         ctx.run_later(Duration::new(delay, 0), |act, _| {
@@ -85,13 +93,13 @@ impl Peer {
         // Commitment round finished but actor wasn't commit,
         // something went wrong and actor is aboring
         match self.state {
-            PeerState::Commit => {},
+            PeerState::Commit => {}
 
             _ => {
                 println!("[commitment round] Peer {} wasn't commit", self.id);
 
                 ctx.stop();
-                return
+                return;
             }
         };
 
@@ -100,13 +108,18 @@ impl Peer {
         if self.commitments.len() as f32 >= self.num_peers as f32 * (2f32 / 3f32) {
             // Sort commitments by peer ID to protect from different result per peer due to
             // different time of arrival of particular commitment to the particular peer.
-            let mut commitments = self.commitments.values().into_iter()
+            let mut commitments = self
+                .commitments
+                .values()
+                .into_iter()
                 .map(|c| *c)
                 .collect::<Vec<_>>();
             commitments.sort_unstable_by_key(|k| k.id_from);
 
-            println!("[commitment round] Peer #{} is creating seed from commitments: {:?}", self.id,
-                     commitments);
+            println!(
+                "[commitment round] Peer #{} is creating seed from commitments: {:?}",
+                self.id, commitments
+            );
 
             // Create a seed by appending commitments
             let seed = commitments
@@ -118,11 +131,18 @@ impl Peer {
 
             self.seed = Some(seed.clone());
 
-            println!("[commitment round] #{}: seed created: {}", self.id, hex::encode(seed));
+            println!(
+                "[commitment round] #{}: seed created: {}",
+                self.id,
+                hex::encode(seed)
+            );
 
             self.calculate_vdf(ctx);
         } else {
-            println!("[commitment round] #{}: not enough commitments collected, restarting", self.id);
+            println!(
+                "[commitment round] #{}: not enough commitments collected, restarting",
+                self.id
+            );
             self.create_commitment_after_delay(ctx);
         }
     }
@@ -138,7 +158,10 @@ impl Peer {
         println!("[vdf round] Peer #{} is calculating VDF...", self.id);
 
         self.state = PeerState::DoingVdf;
-        let witness = vdf::PietrzakVDFParams(VDF_PARAMS).new().solve(&seed, VDF_DIFFICULTY).unwrap();
+        let witness = vdf::PietrzakVDFParams(VDF_PARAMS)
+            .new()
+            .solve(&seed, VDF_DIFFICULTY)
+            .unwrap();
 
         let vdf_result = VdfResult {
             id_from: self.id,
@@ -224,7 +247,12 @@ impl Handler<Commitment> for Peer {
             let id_from = msg.id_from;
             self.commitments.insert(msg.id_from, msg);
 
-            println!("[commitment round] Peer #{} saved commitment {} from #{}", self.id, hex::encode(msg.value), id_from);
+            println!(
+                "[commitment round] Peer #{} saved commitment {} from #{}",
+                self.id,
+                hex::encode(msg.value),
+                id_from
+            );
         }
     }
 }
@@ -237,7 +265,10 @@ impl Handler<VdfResult> for Peer {
             let id_from = msg.id_from;
             self.vdf_results.insert(msg.id_from, msg);
 
-            println!("[vdf round] Peer #{} saved VDF result from #{}", self.id, id_from);
+            println!(
+                "[vdf round] Peer #{} saved VDF result from #{}",
+                self.id, id_from
+            );
         }
     }
 }

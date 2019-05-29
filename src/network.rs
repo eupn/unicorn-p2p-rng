@@ -5,7 +5,7 @@ use crate::peer::*;
 
 #[derive(Debug)]
 pub struct Network {
-    pub peers: Vec<Addr<Peer>>
+    pub peers: Vec<Addr<Peer>>,
 }
 
 /// A peer connected to the network
