@@ -107,7 +107,7 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
             vdf_results: Default::default(),
             seed: None,
             threshold: self.threshold,
-            _digest: PhantomData
+            _digest: PhantomData,
         }
     }
 }
@@ -158,8 +158,7 @@ mod tests {
     #[test]
     pub fn test_seed_creation() {
         const THRESHOLD: usize = 3;
-        let mut unicorn =
-            SimpleUnicorn::new(THRESHOLD);
+        let mut unicorn = SimpleUnicorn::new(THRESHOLD);
 
         assert_eq!(unicorn.state(), UnicornState::CollectingSeedCommitments);
 
