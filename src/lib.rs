@@ -1,8 +1,8 @@
+use digest::Digest;
 use std::collections::HashMap;
 use std::hash::Hash;
-use vdf::VDF;
-use digest::Digest;
 use std::marker::PhantomData;
+use vdf::VDF;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum UnicornError {
@@ -36,7 +36,6 @@ pub struct Unicorn<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D:
     threshold: usize,
 
     _digest: PhantomData<D>,
-
 }
 
 impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unicorn<I, C, R, D> {
@@ -82,7 +81,7 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
 
     pub fn add_seed_commitment(&mut self, commitment: C) -> Result<(), UnicornError> {
         if self.state != UnicornState::CollectingSeedCommitments {
-            return Err(UnicornError::NotCollectingSeedCommitments)
+            return Err(UnicornError::NotCollectingSeedCommitments);
         }
 
         self.seed_commitments.insert(commitment.id(), commitment);
@@ -106,12 +105,12 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vdf::*;
     use sha2::Sha256;
+    use vdf::*;
 
     struct SimpleSeedCommitment {
         id: u64,
-        value: Vec<u8>
+        value: Vec<u8>,
     }
 
     impl SeedCommitment<u64> for SimpleSeedCommitment {
@@ -147,7 +146,8 @@ mod tests {
     #[test]
     pub fn test_seed_creation() {
         const THRESHOLD: usize = 3;
-        let mut unicorn = Unicorn::<u64, SimpleSeedCommitment, SimpleVdfResult, Sha256>::new(THRESHOLD);
+        let mut unicorn =
+            Unicorn::<u64, SimpleSeedCommitment, SimpleVdfResult, Sha256>::new(THRESHOLD);
 
         assert_eq!(unicorn.state(), UnicornState::CollectingSeedCommitments);
 
@@ -155,7 +155,7 @@ mod tests {
         for i in 0..THRESHOLD {
             let c = SimpleSeedCommitment {
                 id: i as u64,
-                value: (0..32).into_iter().map(|v| v as u8).collect()
+                value: (0..32).into_iter().map(|v| v as u8).collect(),
             };
 
             assert_eq!(unicorn.state(), UnicornState::CollectingSeedCommitments);
@@ -167,13 +167,17 @@ mod tests {
         assert!(unicorn.seed().is_some());
 
         // Can't add commitments after seed is ready
-        assert_eq!(unicorn.add_seed_commitment(SimpleSeedCommitment {
-            id: THRESHOLD as u64 + 1u64,
-            value: vec![0xDEu8, 0xADu8, 0xBEu8, 0xEFu8],
-        }), Err(UnicornError::NotCollectingSeedCommitments));
+        assert_eq!(
+            unicorn.add_seed_commitment(SimpleSeedCommitment {
+                id: THRESHOLD as u64 + 1u64,
+                value: vec![0xDEu8, 0xADu8, 0xBEu8, 0xEFu8],
+            }),
+            Err(UnicornError::NotCollectingSeedCommitments)
+        );
 
-
-        assert_eq!(hex::encode(&unicorn.seed().unwrap()),
-                   "b11eb469e77f6577dbc8d7ca1562f599efc5701b26868d2726ae5581099df6a1");
+        assert_eq!(
+            hex::encode(&unicorn.seed().unwrap()),
+            "b11eb469e77f6577dbc8d7ca1562f599efc5701b26868d2726ae5581099df6a1"
+        );
     }
 }
