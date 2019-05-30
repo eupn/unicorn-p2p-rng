@@ -7,6 +7,7 @@ use vdf::VDF;
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum UnicornError {
     NotCollectingSeedCommitments,
+    NotEnoughSeedCommitments,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -77,17 +78,23 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
         self.hash(&seed)
     }
 
+    pub fn finalize_seed(&mut self) -> Result<(), UnicornError> {
+        if self.seed_commitments.len() >= self.threshold {
+            self.seed = Some(self.calculate_seed());
+            self.state = UnicornState::SeedReady;
+        } else {
+            return Err(UnicornError::NotEnoughSeedCommitments);
+        }
+
+        return Ok(());
+    }
+
     pub fn add_seed_commitment(&mut self, commitment: C) -> Result<(), UnicornError> {
         if self.state != UnicornState::CollectingSeedCommitments {
             return Err(UnicornError::NotCollectingSeedCommitments);
         }
 
         self.seed_commitments.insert(commitment.id(), commitment);
-
-        if self.seed_commitments.len() >= self.threshold {
-            self.seed = Some(self.calculate_seed());
-            self.state = UnicornState::SeedReady;
-        }
 
         Ok(())
     }
@@ -155,40 +162,119 @@ mod tests {
 
     type SimpleUnicorn = Unicorn<u64, SimpleSeedCommitment, SimpleVdfResult, Sha256>;
 
+    fn seed_unicorn_with(
+        unicorn: &mut SimpleUnicorn,
+        commitments: Vec<SimpleSeedCommitment>,
+    ) -> Result<(), UnicornError> {
+        // Generate enough seed shares
+        for sc in commitments {
+            assert_eq!(unicorn.state(), UnicornState::CollectingSeedCommitments);
+            unicorn.add_seed_commitment(sc)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_not_enough_seed_commitments() {
+        const THRESHOLD: usize = 3;
+        let mut unicorn = SimpleUnicorn::new(THRESHOLD);
+
+        // 1 of 3 seed commitments
+        let commitments = vec![SimpleSeedCommitment {
+            id: 0,
+            value: vec![0u8, 0u8, 0u8],
+        }];
+
+        assert!(seed_unicorn_with(&mut unicorn, commitments).is_ok());
+
+        // Should be unable to produce seed
+        assert_eq!(
+            unicorn.finalize_seed(),
+            Err(UnicornError::NotEnoughSeedCommitments)
+        );
+    }
+
+    #[test]
+    pub fn test_more_seed_commitments() {
+        const THRESHOLD: usize = 3;
+        let mut unicorn = SimpleUnicorn::new(THRESHOLD);
+
+        // 5 of 3 seed commitments
+        let commitments = vec![
+            SimpleSeedCommitment {
+                id: 0,
+                value: vec![0u8, 0u8, 0u8],
+            },
+            SimpleSeedCommitment {
+                id: 1,
+                value: vec![1u8, 1u8, 1u8],
+            },
+            SimpleSeedCommitment {
+                id: 2,
+                value: vec![2u8, 2u8, 2u8],
+            },
+            SimpleSeedCommitment {
+                id: 3,
+                value: vec![3u8, 3u8, 3u8],
+            },
+            SimpleSeedCommitment {
+                id: 4,
+                value: vec![4u8, 4u8, 4u8],
+            },
+        ];
+
+        assert!(seed_unicorn_with(&mut unicorn, commitments).is_ok());
+
+        // Finalize seed
+        assert!(unicorn.finalize_seed().is_ok());
+
+        // Seed should be ready
+        assert_eq!(unicorn.state(), UnicornState::SeedReady);
+        assert!(unicorn.seed().is_some());
+        assert_eq!(
+            hex::encode(&unicorn.seed().unwrap()),
+            "8d84c7b55695b4ac9ef8a92224a64f449107a4027dd763587003fc65a664f4ce"
+        );
+    }
+
     #[test]
     pub fn test_seed_creation() {
         const THRESHOLD: usize = 3;
         let mut unicorn = SimpleUnicorn::new(THRESHOLD);
 
-        assert_eq!(unicorn.state(), UnicornState::CollectingSeedCommitments);
+        // Shouldn't be able to produce seed too early
+        assert_eq!(
+            unicorn.finalize_seed(),
+            Err(UnicornError::NotEnoughSeedCommitments)
+        );
 
-        // Generate enough seed shares
-        for i in 0..THRESHOLD {
-            let c = SimpleSeedCommitment {
-                id: i as u64,
-                value: (0..32).into_iter().map(|v| v as u8).collect(),
-            };
+        let commitments = vec![
+            SimpleSeedCommitment {
+                id: 0,
+                value: vec![0u8, 0u8, 0u8],
+            },
+            SimpleSeedCommitment {
+                id: 1,
+                value: vec![1u8, 1u8, 1u8],
+            },
+            SimpleSeedCommitment {
+                id: 2,
+                value: vec![2u8, 2u8, 2u8],
+            },
+        ];
 
-            assert_eq!(unicorn.state(), UnicornState::CollectingSeedCommitments);
-            unicorn.add_seed_commitment(c).expect("Add seed commitment");
-        }
+        assert!(seed_unicorn_with(&mut unicorn, commitments).is_ok());
+
+        // Finalize seed
+        assert!(unicorn.finalize_seed().is_ok());
 
         // Seed should be ready
         assert_eq!(unicorn.state(), UnicornState::SeedReady);
         assert!(unicorn.seed().is_some());
-
-        // Can't add commitments after seed is ready
-        assert_eq!(
-            unicorn.add_seed_commitment(SimpleSeedCommitment {
-                id: THRESHOLD as u64 + 1u64,
-                value: vec![0xDEu8, 0xADu8, 0xBEu8, 0xEFu8],
-            }),
-            Err(UnicornError::NotCollectingSeedCommitments)
-        );
-
         assert_eq!(
             hex::encode(&unicorn.seed().unwrap()),
-            "b11eb469e77f6577dbc8d7ca1562f599efc5701b26868d2726ae5581099df6a1"
+            "4333ddceb169e2f1741ae48779c9b647154fd69affc8b61f050de97a87945ba3"
         );
     }
 }
