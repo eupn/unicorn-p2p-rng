@@ -360,10 +360,13 @@ mod tests {
             unicorn.add_vdf_result(res).unwrap();
         }
 
-        assert!(unicorn.finalize_vdf_result().is_ok()); 
+        assert!(unicorn.finalize_vdf_result().is_ok());
         let randomness = unicorn.randomness.unwrap();
         let randomness = hex::encode(&randomness);
 
-        assert_eq!(randomness, "5eade8103071b0421c012c771fe92b5939101682ac0b321d98a57c16a96efe23");
+        assert_eq!(
+            randomness,
+            "5eade8103071b0421c012c771fe92b5939101682ac0b321d98a57c16a96efe23"
+        );
     }
 }
