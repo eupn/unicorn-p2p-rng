@@ -2,19 +2,19 @@ use digest::Digest;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use vdf::VDF;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum UnicornError {
     NotCollectingSeedCommitments,
     NotEnoughSeedCommitments,
+    NotCollectingVdfResults,
+    NotEnoughVdfResults,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum UnicornState {
     CollectingSeedCommitments,
     SeedReady,
-    VdfReady,
     RandomnessReady,
 }
 
@@ -23,7 +23,7 @@ pub trait SeedCommitment<I: Hash + Eq + Ord> {
     fn value(&self) -> Vec<u8>;
 }
 
-pub trait VdfResult<I: Hash + Eq + Ord> {
+pub trait VdfResult<I: Hash + Eq + Ord>: Clone {
     fn id(&self) -> I;
     fn seed(&self) -> Vec<u8>;
     fn value(&self) -> Vec<u8>;
@@ -34,6 +34,7 @@ pub struct Unicorn<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D:
     seed_commitments: HashMap<I, C>,
     vdf_results: HashMap<I, R>,
     seed: Option<Vec<u8>>,
+    randomness: Option<Vec<u8>>,
     threshold: usize,
 
     _digest: PhantomData<D>,
@@ -46,6 +47,7 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
             seed_commitments: HashMap::new(),
             vdf_results: HashMap::new(),
             seed: None,
+            randomness: None,
             threshold,
 
             _digest: PhantomData,
@@ -99,6 +101,44 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
         Ok(())
     }
 
+    pub fn add_vdf_result(&mut self, vdf_result: R) -> Result<(), UnicornError> {
+        if self.state != UnicornState::SeedReady {
+            return Err(UnicornError::NotCollectingVdfResults);
+        }
+
+        self.vdf_results.insert(vdf_result.id(), vdf_result);
+
+        Ok(())
+    }
+
+    fn most_frequent_vdf_result(&mut self) -> Option<(Vec<u8>, usize)> {
+        let mut freq_map = HashMap::<Vec<u8>, usize>::new();
+
+        for res in self.vdf_results.values() {
+            *freq_map.entry(res.value()).or_insert(0) += 1;
+        }
+
+        let mut freq_vec = freq_map.into_iter().collect::<Vec<_>>();
+        freq_vec.sort_unstable_by_key(|(_, freq)| *freq);
+
+        freq_vec.first().cloned()
+    }
+
+    pub fn finalize_vdf_result(&mut self) -> Result<(), UnicornError> {
+        if let Some((res, freq)) = self.most_frequent_vdf_result() {
+            if freq < self.threshold {
+                return Err(UnicornError::NotEnoughVdfResults);
+            }
+
+            self.randomness = Some(self.hash(&res));
+            self.state = UnicornState::RandomnessReady;
+        } else {
+            return Err(UnicornError::NotEnoughVdfResults);
+        }
+
+        return Ok(());
+    }
+
     pub fn state(&self) -> UnicornState {
         self.state
     }
@@ -113,6 +153,7 @@ impl<I: Hash + Eq + Ord, C: SeedCommitment<I>, R: VdfResult<I>, D: Digest> Unico
             seed_commitments: Default::default(),
             vdf_results: Default::default(),
             seed: None,
+            randomness: None,
             threshold: self.threshold,
             _digest: PhantomData,
         }
@@ -140,6 +181,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone)]
     struct SimpleVdfResult {
         id_from: u64,
         seed: Vec<u8>,
@@ -276,5 +318,52 @@ mod tests {
             hex::encode(&unicorn.seed().unwrap()),
             "4333ddceb169e2f1741ae48779c9b647154fd69affc8b61f050de97a87945ba3"
         );
+    }
+
+    #[test]
+    pub fn test_vdf_results() {
+        const THRESHOLD: usize = 3;
+        let mut unicorn = SimpleUnicorn::new(THRESHOLD);
+
+        let commitments = vec![
+            SimpleSeedCommitment {
+                id: 0,
+                value: vec![0u8, 0u8, 0u8],
+            },
+            SimpleSeedCommitment {
+                id: 1,
+                value: vec![1u8, 1u8, 1u8],
+            },
+            SimpleSeedCommitment {
+                id: 2,
+                value: vec![2u8, 2u8, 2u8],
+            },
+        ];
+
+        seed_unicorn_with(&mut unicorn, commitments).unwrap();
+        unicorn.finalize_seed().unwrap();
+
+        let seed = unicorn.seed().unwrap();
+        let vdf = vdf::PietrzakVDFParams(1024).new();
+        let vdf_result = (0..THRESHOLD)
+            .into_iter()
+            .map(|_| vdf.solve(&seed, 1_000).unwrap())
+            .enumerate()
+            .map(|(id, res)| SimpleVdfResult {
+                id_from: id as u64,
+                seed: seed.clone(),
+                result: res.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        for res in vdf_result.into_iter() {
+            unicorn.add_vdf_result(res).unwrap();
+        }
+
+        assert!(unicorn.finalize_vdf_result().is_ok()); 
+        let randomness = unicorn.randomness.unwrap();
+        let randomness = hex::encode(&randomness);
+
+        assert_eq!(randomness, "5eade8103071b0421c012c771fe92b5939101682ac0b321d98a57c16a96efe23");
     }
 }
